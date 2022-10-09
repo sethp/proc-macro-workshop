@@ -39,4 +39,6 @@ pub enum Conference {
     RustRush,
 }
 
-fn main() {}
+fn main() {
+    let _ = Conference::RustBeltRust;
+}
