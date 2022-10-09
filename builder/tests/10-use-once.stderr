@@ -1,0 +1,18 @@
+error[E0382]: use of moved value: `builder`
+  --> tests/10-use-once.rs:16:5
+   |
+12 |     let builder = Command::builder();
+   |         ------- move occurs because `builder` has type `CommandBuilder`, which does not implement the `Copy` trait
+13 |
+14 |     let _ = builder.build();
+   |                     ------- `builder` moved due to this method call
+15 |
+16 |     builder.build();
+   |     ^^^^^^^ value used here after move
+   |
+note: this function takes ownership of the receiver `self`, which moves `builder`
+  --> tests/10-use-once.rs:3:10
+   |
+3  | #[derive(Builder)]
+   |          ^^^^^^^
+   = note: this error originates in the derive macro `Builder` (in Nightly builds, run with -Z macro-backtrace for more info)
