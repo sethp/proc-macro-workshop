@@ -40,4 +40,9 @@ enum ErrorKind {
     Eof,
 }
 
-fn main() {}
+fn main() {
+    let _ = Error {
+        kind: ErrorKind::Io,
+        message: "i/o err".to_owned(),
+    };
+}
