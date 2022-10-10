@@ -29,7 +29,7 @@ fn handle_enum(e: syn::ItemEnum) -> Result<(), syn::Error> {
         Some(v) => &v.ident,
         None => return Ok(()), // empty enums are sorted
     };
-    for var @ &Variant { ref ident, .. } in e.variants.iter().skip(1) {
+    for &Variant { ref ident, .. } in e.variants.iter().skip(1) {
         if last < ident {
             last = ident;
             continue;
@@ -43,7 +43,7 @@ fn handle_enum(e: syn::ItemEnum) -> Result<(), syn::Error> {
             .unwrap() // ident must be < at least "last", but may come sooner
             .ident;
         return Err(syn::Error::new_spanned(
-            var,
+            ident,
             format!("{} should sort before {}", ident, before),
         ));
     }
