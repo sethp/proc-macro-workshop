@@ -18,4 +18,9 @@ trybuild = { version = "1.0.49", features = ["diff"] }
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = { version = "1.0.101", features = ["full"]}
+syn = { version = "1.0.101", features = ["full", "visit-mut"]}
+
+[features]
+default = [
+    "syn/extra-traits",  # adds fmt::Debug impls
+]
