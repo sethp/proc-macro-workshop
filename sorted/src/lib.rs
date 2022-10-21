@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
-use proc_macro2::Span;
+use proc_macro2::{Ident, Span};
 use quote::ToTokens;
 use syn::{
-    parse_macro_input, visit_mut::VisitMut, Attribute, Item, ItemFn, Pat, PathArguments,
+    parse_macro_input, visit_mut::VisitMut, Attribute, Item, ItemFn, Pat, PatIdent, PathArguments,
     PathSegment, Variant,
 };
 
@@ -85,7 +85,9 @@ impl syn::visit_mut::VisitMut for Sorted {
 fn handle_match_expr(mexpr: &syn::ExprMatch) -> Result<(), syn::Error> {
     fn pat_path(pat: &Pat) -> Result<Ordered, syn::Error> {
         match pat {
-            Pat::TupleStruct(ts) => Ok(Ordered(ts.path.clone())),
+            Pat::Ident(PatIdent { ident, .. }) => Ok(Ordered::Ident(ident.clone())),
+            Pat::TupleStruct(ts) => Ok(Ordered::Path(ts.path.clone())),
+            Pat::Wild(wild) => Ok(Ordered::Wild(wild.clone())),
             _ => Err(syn::Error::new_spanned(pat, "unsupported by #[sorted]")),
         }
     }
@@ -98,45 +100,59 @@ fn handle_match_expr(mexpr: &syn::ExprMatch) -> Result<(), syn::Error> {
 
     let mut seen = vec![first];
     for arm in rest {
-        let ident = pat_path(&arm.pat)?;
-        if seen.last().unwrap() < &ident {
-            seen.push(ident);
+        let ord = pat_path(&arm.pat)?;
+        if seen.last().unwrap() < &ord {
+            seen.push(ord);
             continue;
         }
 
-        let before = seen.iter().find(|&e| &ident < e).unwrap();
-        return Err(syn::Error::new_spanned(
-            &ident.0,
-            format!("{} should sort before {}", ident, before),
-        ));
+        let before = seen.iter().find(|&e| &ord < e).unwrap();
+        return Err(ord.err_at(format!("{} should sort before {}", ord, before)));
     }
 
     Ok(())
 }
 
 #[derive(Debug)]
-struct Ordered(syn::Path);
+enum Ordered {
+    Path(syn::Path),
+    Ident(syn::Ident),
+    Wild(syn::PatWild),
+}
+
+impl Ordered {
+    fn err_at<U: std::fmt::Display>(&self, message: U) -> syn::Error {
+        match self {
+            Ordered::Ident(tokens) => syn::Error::new_spanned(tokens, message),
+            Ordered::Path(tokens) => syn::Error::new_spanned(tokens, message),
+            Ordered::Wild(tokens) => syn::Error::new_spanned(tokens, message),
+        }
+    }
+}
 
 impl std::fmt::Display for Ordered {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}{}",
-            if let Some(_) = self.0.leading_colon {
-                "::"
-            } else {
-                ""
-            },
-            self.0
-                .segments
-                .iter()
-                .map(|s| match s.arguments {
-                    PathArguments::None => s.ident.to_string(),
-                    _ => unimplemented!(),
-                })
-                .collect::<Vec<String>>()
-                .join("::")
-        )
+        match self {
+            Ordered::Ident(ident) => write!(f, "{}", ident),
+            Ordered::Wild(_) => write!(f, "_"),
+            Ordered::Path(path) => write!(
+                f,
+                "{}{}",
+                if let Some(_) = path.leading_colon {
+                    "::"
+                } else {
+                    ""
+                },
+                path.segments
+                    .iter()
+                    .map(|s| match s.arguments {
+                        PathArguments::None => s.ident.to_string(),
+                        _ => unimplemented!(),
+                    })
+                    .collect::<Vec<String>>()
+                    .join("::")
+            ),
+        }
     }
 }
 
@@ -144,41 +160,57 @@ impl Ord for Ordered {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
 
-        match (self.0.leading_colon, other.0.leading_colon) {
-            (Some(_), None) => return Ordering::Less,
-            (None, Some(_)) => return Ordering::Greater,
-            (Some(_), Some(_)) | (None, None) => (),
-        };
-
-        let mut ss = self.0.segments.iter();
-        let mut os = other.0.segments.iter();
-
-        loop {
-            match (ss.next(), os.next()) {
-                (
-                    Some(PathSegment {
-                        ident: s,
-                        arguments: PathArguments::None,
-                    }),
-                    Some(PathSegment {
-                        ident: o,
-                        arguments: PathArguments::None,
-                    }),
-                ) => {
-                    if s < o {
-                        return Ordering::Less;
-                    } else if s > o {
-                        return Ordering::Greater;
-                    }
-                }
-                (Some(_), None) => return Ordering::Greater,
-                (None, Some(_)) => return Ordering::Less,
-                (None, None) => break,
-                _ => unimplemented!(),
-            };
+        fn cmp_id_path(ident: &Ident, path: &syn::Path) -> Ordering {
+            unimplemented!("comparing {:?} and {:?} is undefined", ident, path);
         }
 
-        Ordering::Equal
+        match (self, other) {
+            (Ordered::Wild(_), Ordered::Wild(_)) => return Ordering::Equal,
+            (Ordered::Wild(_), _) => return Ordering::Greater,
+            (_, Ordered::Wild(_)) => return Ordering::Less,
+
+            (Ordered::Ident(id1), Ordered::Ident(id2)) => id1.cmp(id2),
+            (Ordered::Ident(id), Ordered::Path(path)) => cmp_id_path(id, path),
+            (Ordered::Path(path), Ordered::Ident(id)) => cmp_id_path(id, path).reverse(),
+
+            (Ordered::Path(p1), Ordered::Path(p2)) => {
+                match (p1.leading_colon, p2.leading_colon) {
+                    (Some(_), None) => return Ordering::Less,
+                    (None, Some(_)) => return Ordering::Greater,
+                    (Some(_), Some(_)) | (None, None) => (),
+                };
+
+                let mut ss = p1.segments.iter();
+                let mut os = p2.segments.iter();
+
+                loop {
+                    match (ss.next(), os.next()) {
+                        (
+                            Some(PathSegment {
+                                ident: s,
+                                arguments: PathArguments::None,
+                            }),
+                            Some(PathSegment {
+                                ident: o,
+                                arguments: PathArguments::None,
+                            }),
+                        ) => {
+                            if s < o {
+                                return Ordering::Less;
+                            } else if s > o {
+                                return Ordering::Greater;
+                            }
+                        }
+                        (Some(_), None) => return Ordering::Greater,
+                        (None, Some(_)) => return Ordering::Less,
+                        (None, None) => break,
+                        _ => unimplemented!(),
+                    };
+                }
+
+                Ordering::Equal
+            }
+        }
     }
 }
 
@@ -214,7 +246,7 @@ pub mod test {
             parse_quote!(::a::b),
             parse_quote!(b),
         ]
-        .map(Ordered);
+        .map(Ordered::Path);
 
         all.sort();
 
