@@ -86,7 +86,7 @@ fn handle_match_expr(mexpr: &syn::ExprMatch) -> Result<(), syn::Error> {
     fn pat_path(pat: &Pat) -> Result<Ordered, syn::Error> {
         match pat {
             Pat::TupleStruct(ts) => Ok(Ordered(ts.path.clone())),
-            _ => todo!("{:?}", pat),
+            _ => Err(syn::Error::new_spanned(pat, "unsupported by #[sorted]")),
         }
     }
 
